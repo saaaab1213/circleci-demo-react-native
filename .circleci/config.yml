@@ -1,157 +1,42 @@
-version: 2.1
+version: 2
+aliases:
+  - &restore-yarn-cache
+    name: Restore cached root node_modules
+    key: yarn-cache-{{ checksum "yarn.lock" }}
+  - &save-yarn-cache
+      name: Save node_modules to cache
+      key: yarn-cache-{{ checksum "yarn.lock" }}
+      paths:
+        - node_modules  
+
 jobs:
-  node:
-    working_directory: ~/demo-react-native
+  android:
     docker:
-      - image: cimg/node:12.16
-
+      - image: reactnativecommunity/react-native-android
     steps:
       - checkout
-
-      - restore_cache:
-          key: yarn-v1-{{ checksum "yarn.lock" }}-{{ arch }}
-
-      - restore_cache:
-          key: node-v1-{{ checksum "package.json" }}-{{ arch }}
-
-      - run: yarn install
-
-      - save_cache:
-          key: yarn-v1-{{ checksum "yarn.lock" }}-{{ arch }}
-          paths:
-            - ~/.cache/yarn
-
-      - save_cache:
-          key: node-v1-{{ checksum "package.json" }}-{{ arch }}
-          paths:
-            - node_modules
-
-      - run:
-          name: jest tests
-          command: |
-            mkdir -p test-results/jest
-            yarn run test
-          environment:
-            JEST_JUNIT_OUTPUT: test-results/jest/junit.xml
-
-      - persist_to_workspace:
-          root: ~/demo-react-native
-          paths:
-            - node_modules
-
-      - store_test_results:
-          path: test-results
-
-      - store_artifacts:
-          path: test-results
-
-  macos-build-and-test:
-    working_directory: ~/demo-react-native
-    macos:
-      xcode: 11.3.0
-    environment:
-      FL_OUTPUT_DIR: output
-      FASTLANE_LANE: test
-
-    steps:
-      - checkout
-      - restore_cache:
-          key: yarn-v1-{{ checksum "yarn.lock" }}-{{ arch }}
-
-      - restore_cache:
-          key: node-v1-{{ checksum "package.json" }}-{{ arch }}
-
-      - run: yarn install
-
-      - save_cache:
-          key: yarn-v1-{{ checksum "yarn.lock" }}-{{ arch }}
-          paths:
-            - ~/.cache/yarn
-
-      - save_cache:
-          key: node-v1-{{ checksum "package.json" }}-{{ arch }}
-          paths:
-            - node_modules
-
-      - restore_cache:
-          key: bundle-v1-{{ checksum "ios/Gemfile.lock" }}-{{ arch }}
-
-      #Pods directory is ignored to match default RN setup, but can also check them into source control
-      #https://guides.cocoapods.org/using/using-cocoapods.html#should-i-check-the-pods-directory-into-source-control
-      - restore_cache:
-          key: pods-v1-{{ checksum "ios/Podfile.lock" }}-{{ arch }}
-
+      - restore_cache: *restore-yarn-cache
       - run: 
-          command: pod install
-          working_directory: ios
-
-      - run: 
-          command: bundle install
-          working_directory: ios
-
-      - save_cache:
-          key: bundle-v1-{{ checksum "ios/Gemfile.lock" }}-{{ arch }}
-          paths:
-            - vendor/bundle
-
-      - save_cache:
-          key: pods-v1-{{ checksum "ios/Podfile.lock" }}-{{ arch }}
-          paths:
-            - ios/Pods
-
+          name: yarn install 
+          command: yarn install
+      - save_cache: *save-yarn-cache
       - run:
-          name: Fastlane
-          command: bundle exec fastlane $FASTLANE_LANE
-          working_directory: ios
-
-      - store_artifacts:
-          path: output
-          
-      - store_test_results:
-          path: output/scan
-            
-  android-build-and-test:
-    working_directory: ~/demo-react-native/android
-    docker:
-      - image: circleci/android:api-29-node
-    steps:
-      - checkout:
-          path: ~/demo-react-native
-
-      - attach_workspace:
-          at: ~/demo-react-native
-
-      - restore_cache:
-          key: bundle-v1-{{ checksum "Gemfile.lock" }}-{{ arch }}
-
-      - run: bundle install
-
-      - save_cache:
-          key: bundle-v1-{{ checksum "Gemfile.lock" }}-{{ arch }}
-          paths:
-            - vendor/bundle
-
+          name: env file
+          command: ENVFILE=.env.development
       - run:
-          name: fastlane tests
+          name: jetify
+          command: npx jetify
+      - run:
+          name: react bundle
+          command: npx react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle
+      - run:          
+          name: android build
           command: |
-            mkdir -p test-results/fastlane
-            bundle exec fastlane test
-            mv fastlane/report.xml test-results/fastlane
-
-      - store_test_results:
-          path: test-results
-
-      - store_artifacts:
-          path: test-results
-
+            cd android 
+            cp keystore.properties.example keystore.properties
+            chmod +x gradlew && ./gradlew assembleDebug 
 workflows:
-  node-android-ios:
+  version: 2
+  build_and_test:
     jobs:
-      - node
-      - android-build-and-test:
-          requires:
-            - node
-      - macos-build-and-test:
-          requires:
-            - node
-            
+      - android
